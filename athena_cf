@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Setup for Athena CloudTrail Analysis'
+
+Parameters:
+  CloudTrailBucketName:
+    Type: String
+    Description: Name of the existing CloudTrail S3 bucket
+  ResultsBucketName:
+    Type: String
+    Description: Name for the new Athena query results bucket
+
+Resources:
+  AthenaResultsBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !Ref ResultsBucketName
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldResults
+            Status: Enabled
+            ExpirationInDays: 7
+
+  AthenaResultsBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref AthenaResultsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: athena.amazonaws.com
+            Action: 's3:PutObject'
+            Resource: !Sub '${AthenaResultsBucket.Arn}/*'
+
+  AthenaWorkGroup:
+    Type: 'AWS::Athena::WorkGroup'
+    Properties:
+      Name: CloudTrailAnalysis
+      Description: 'Workgroup for CloudTrail log analysis'
+      State: ENABLED
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${AthenaResultsBucket}/query-results/'
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+
+  GlueDatabase:
+    Type: 'AWS::Glue::Database'
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: cloudtrail_logs
+        Description: 'Database for CloudTrail logs analysis'
+
+  CloudTrailTable:
+    Type: 'AWS::Glue::Table'
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: cloudtrail_logs
+        Description: 'CloudTrail logs table'
+        TableType: EXTERNAL_TABLE
+        Parameters: {
+          "classification": "cloudtrail",
+          "typeOfData": "cloudtrail"
+        }
+        StorageDescriptor:
+          Location: !Sub 's3://${CloudTrailBucketName}/AWSLogs/'
+          InputFormat: com.amazon.emr.cloudtrail.CloudTrailInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: com.amazon.emr.hive.serde.CloudTrailSerde
+          Columns:
+            - Name: eventversion
+              Type: string
+            - Name: useridentity
+              Type: struct<type:string,principalid:string,arn:string,accountid:string,invokedby:string,accesskeyid:string,username:string,sessioncontext:struct<attributes:struct<mfaauthenticated:string,creationdate:string>,sessionissuer:struct<type:string,principalid:string,arn:string,accountid:string,username:string>>>
+            - Name: eventtime
+              Type: string
+            - Name: eventsource
+              Type: string
+            - Name: eventname
+              Type: string
+            - Name: awsregion
+              Type: string
+            - Name: sourceipaddress
+              Type: string
+            - Name: useragent
+              Type: string
+            - Name: errorcode
+              Type: string
+            - Name: errormessage
+              Type: string
+            - Name: requestparameters
+              Type: string
+            - Name: responseelements
+              Type: string
+            - Name: additionaleventdata
+              Type: string
+            - Name: requestid
+              Type: string
+            - Name: eventid
+              Type: string
+            - Name: resources
+              Type: array<struct<arn:string,accountid:string,type:string>>
+            - Name: eventtype
+              Type: string
+            - Name: apiversion
+              Type: string
+            - Name: readonly
+              Type: string
+            - Name: recipientaccountid
+              Type: string
+            - Name: serviceeventdetails
+              Type: string
+            - Name: sharedeventid
+              Type: string
+            - Name: vpcendpointid
+              Type: string
+        PartitionKeys:
+          - Name: region
+            Type: string
+          - Name: year
+            Type: string
+          - Name: month
+            Type: string
+          - Name: day
+            Type: string
